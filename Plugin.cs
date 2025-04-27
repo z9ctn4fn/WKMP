@@ -1,45 +1,59 @@
 ﻿using BepInEx;
 using BepInEx.Logging;
 using Netcode.Transports.Facepunch;
+using Steamworks;
+using System;
+using System.Linq;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using static UnityEngine.UIElements.StylePropertyAnimationSystem;
 
 namespace WKMP;
 
-[BepInPlugin(WKMPInfo.PLUGIN_GUID, WKMPInfo.PLUGIN_NAME, WKMPInfo.PLUGIN_VERSION)]
+[BepInPlugin(MyPluginInfo.PLUGIN_GUID, MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
 public class Plugin : BaseUnityPlugin
 {
     internal static new ManualLogSource Logger;
-
     private bool _alreadySpawned;
+    public static SteamId Id => SteamClient.SteamId;
+    public GameObject netMan = Instantiate(new GameObject("Network Manager"));
+    public NetworkManager netManComp = null;
+    public static IntPtr adress = IntPtr.Zero;
+
 
     private void Awake()
     {
         Logger = base.Logger;
-        Logger.LogInfo($"Plugin {WKMPInfo.PLUGIN_GUID} is loaded!");
+        Logger.LogInfo($"Plugin {MyPluginInfo.PLUGIN_GUID} is loaded!");
+
 
         SceneManager.sceneLoaded += OnSceneLoaded;
+        netManComp = netMan.AddComponent<NetworkManager>();
+
     }
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode loadSceneMode)
     {
+        bool commandsLoaded = false;
         if (scene.name == "Main-Menu")
         {
+
             if (!_alreadySpawned)
             {
                 _alreadySpawned = true;
                 SpawnNetworkManager();
             }
-
-            WorldLoader.SetPresetSeed("4859");
+        }
+        if (!commandsLoaded)
+        {
+            CommandConsole.AddCommand("host", StartHost, false);
+            CommandConsole.AddCommand("join", StartClient, false);
         }
     }
 
     private void SpawnNetworkManager()
     {
-        var netMan = Instantiate(new GameObject("Network Manager"));
-        var netManComp = netMan.AddComponent<NetworkManager>();
 
         netManComp.NetworkConfig = new NetworkConfig()
         {
@@ -58,41 +72,23 @@ public class Plugin : BaseUnityPlugin
     void OnGUI()
     {
         if (NetworkManager.Singleton == null) return;
-
-        GUILayout.BeginArea(new Rect(10, 10, 300, 300));
-        if (!NetworkManager.Singleton.IsClient && !NetworkManager.Singleton.IsServer)
-        {
-            StartButtons();
-        }
-        else
-        {
-            StatusLabels();
-        }
-
-        GUILayout.EndArea();
     }
-
-    static void StartButtons()
+    static void StartHost(string[] yarg) 
     {
-        if (GUILayout.Button("Host"))
-        {
-            NetworkManager.Singleton.StartHost();
-        }
-        if (GUILayout.Button("Client"))
-        {
-            (NetworkManager.Singleton.NetworkConfig.NetworkTransport as FacepunchTransport).targetSteamId = 76561198973313688;
-            NetworkManager.Singleton.StartClient();
-        }
-        if (GUILayout.Button("Server")) NetworkManager.Singleton.StartServer();
+        NetworkManager.Singleton.StartHost();
+
     }
-
-    static void StatusLabels()
+    static void StartClient(string[] StringArraySteamID)
     {
-        var mode = NetworkManager.Singleton.IsHost ?
-            "Host" : NetworkManager.Singleton.IsServer ? "Server" : "Client";
+        string StringSteamID = string.Concat(StringArraySteamID);
+        ulong SteamId = 0;
+        if (long.TryParse(StringSteamID, out long parsed)) SteamId = (ulong)parsed;
+        
+        (NetworkManager.Singleton.NetworkConfig.NetworkTransport as FacepunchTransport).targetSteamId = SteamId;
+        NetworkManager.Singleton.StartClient();
+    }
+    public void SendChat(string[] message)
+    {
 
-        GUILayout.Label("Transport: " +
-            NetworkManager.Singleton.NetworkConfig.NetworkTransport.GetType().Name);
-        GUILayout.Label("Mode: " + mode);
     }
 }
