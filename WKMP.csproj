@@ -29,6 +29,9 @@
     <Reference Include="Facepunch Transport for Netcode for GameObjects">
       <HintPath>lib\Facepunch Transport for Netcode for GameObjects.dll</HintPath>
     </Reference>
+    <Reference Include="Unity.Mathematics">
+      <HintPath>lib\Unity.Mathematics.dll</HintPath>
+    </Reference>
     <Reference Include="Unity.Netcode.Components.net">
       <HintPath>lib\Unity.Netcode.Components.dll</HintPath>
     </Reference>

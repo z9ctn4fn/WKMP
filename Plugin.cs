@@ -5,9 +5,11 @@ using Steamworks;
 using System;
 using System.Linq;
 using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using static UnityEngine.UIElements.StylePropertyAnimationSystem;
+using Unity.Mathematics;
 
 namespace WKMP;
 
@@ -16,20 +18,15 @@ public class Plugin : BaseUnityPlugin
 {
     internal static new ManualLogSource Logger;
     private bool _alreadySpawned;
-    public static SteamId Id => SteamClient.SteamId;
-    public GameObject netMan = Instantiate(new GameObject("Network Manager"));
-    public NetworkManager netManComp = null;
-    public static IntPtr adress = IntPtr.Zero;
 
-
+    public static GameObject netMan;
+    public NetworkManager netManComp;
     private void Awake()
     {
         Logger = base.Logger;
         Logger.LogInfo($"Plugin {MyPluginInfo.PLUGIN_GUID} is loaded!");
 
-
         SceneManager.sceneLoaded += OnSceneLoaded;
-        netManComp = netMan.AddComponent<NetworkManager>();
 
     }
 
@@ -50,22 +47,23 @@ public class Plugin : BaseUnityPlugin
             CommandConsole.AddCommand("host", StartHost, false);
             CommandConsole.AddCommand("join", StartClient, false);
         }
+
     }
 
-    private void SpawnNetworkManager()
+    public void SpawnNetworkManager()
     {
-
+        netMan = Instantiate(new GameObject("Network Manager"));
+        netManComp = netMan.AddComponent<NetworkManager>();
         netManComp.NetworkConfig = new NetworkConfig()
         {
             NetworkTransport = netMan.AddComponent<FacepunchTransport>()
         };
-
         NetworkManager.Singleton.OnClientConnectedCallback += (id) =>
         {
             Logger.LogInfo("lol client connected " + id);
         };
         NetworkManager.Singleton.LogLevel = Unity.Netcode.LogLevel.Developer;
-
+        
         DontDestroyOnLoad(netMan);
     }
 
@@ -73,12 +71,16 @@ public class Plugin : BaseUnityPlugin
     {
         if (NetworkManager.Singleton == null) return;
     }
-    static void StartHost(string[] yarg) 
+    void StartHost(string[] args)
     {
-        NetworkManager.Singleton.StartHost();
 
+        NetworkManager.Singleton.StartHost();
+        GameObject.Find("CL_Player").AddComponent<NetworkObject>();
+        GameObject.Find("CL_Player").AddComponent<NetworkBehaviour>();
+        GameObject.Find("CL_Player").AddComponent<NetworkTransform>();
+        netManComp.AddNetworkPrefab(GameObject.Find("CL_Player"));
     }
-    static void StartClient(string[] StringArraySteamID)
+    void StartClient(string[] StringArraySteamID)
     {
         string StringSteamID = string.Concat(StringArraySteamID);
         ulong SteamId = 0;
@@ -86,9 +88,9 @@ public class Plugin : BaseUnityPlugin
         
         (NetworkManager.Singleton.NetworkConfig.NetworkTransport as FacepunchTransport).targetSteamId = SteamId;
         NetworkManager.Singleton.StartClient();
-    }
-    public void SendChat(string[] message)
-    {
-
+        GameObject.Find("CL_Player").AddComponent<NetworkObject>();
+        GameObject.Find("CL_Player").AddComponent<NetworkBehaviour>();
+        GameObject.Find("CL_Player").AddComponent<NetworkTransform>();
+        netManComp.AddNetworkPrefab(GameObject.Find("CL_Player"));
     }
 }
