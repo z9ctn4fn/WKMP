@@ -11,6 +11,7 @@ using UnityEngine.SceneManagement;
 using static UnityEngine.UIElements.StylePropertyAnimationSystem;
 using Unity.Mathematics;
 using System.Collections;
+using Steamworks.Data;
 
 namespace WKMP;
 
@@ -22,7 +23,7 @@ public class Plugin : BaseUnityPlugin
     public GameObject prefabClone;
     public static GameObject netMan;
     public NetworkManager netManComp;
-    public Plugin Instance;
+    public static Plugin Instance;
     public FacepunchTransport transport;
     private void Awake()
     {
@@ -31,46 +32,27 @@ public class Plugin : BaseUnityPlugin
 
         SceneManager.sceneLoaded += OnSceneLoaded;
         Instance = this;
+        SteamClient.Init(3195790, true);
     }
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode loadSceneMode)
     {
-        if (scene.name != "Main-Menu") return;
-
-        if (!_alreadySpawned)
+        var commandsLoaded = false;
+        if (scene.name == "Main-Menu")
         {
-            _alreadySpawned = true;
-            SpawnNetworkManager();  // starts coroutine setup
+            if (!_alreadySpawned)
+            {
+                _alreadySpawned = true;
+                SpawnNetworkManager();  // this now starts the coroutine too
+            }
         }
 
-        // Register commands each scene load
-        CommandConsole.AddCommand("host", args =>
+        if (!commandsLoaded)
         {
-            if (this == null)
-            {
-                Debug.LogError("[MOD] Plugin.Instance is null in host command.");
-                return;
-            }
-
-            StartCoroutine(WaitForSteamAndStartHost());
-        }, false);
-
-        CommandConsole.AddCommand("join", args =>
-        {
-            if (this == null)
-            {
-                Debug.LogError("[MOD] Plugin.Instance is null in join command.");
-                return;
-            }
-
-            if (args.Length == 0 || !ulong.TryParse(string.Join("", args), out ulong id))
-            {
-                Debug.LogError("[MOD] Missing or invalid Steam ID.");
-                return;
-            }
-
-            StartCoroutine(WaitForSteamAndStartClient(id));
-        }, false);
+            CommandConsole.AddCommand("host", StartHost, false);
+            CommandConsole.AddCommand("join", StartClient, false);
+            commandsLoaded = true;
+        }
     }
 
 
@@ -79,20 +61,17 @@ public class Plugin : BaseUnityPlugin
         netMan = new GameObject("NetworkManager (Mod)");
         netManComp = netMan.AddComponent<NetworkManager>();
         transport = netMan.AddComponent<FacepunchTransport>();
-        netManComp.NetworkConfig = new NetworkConfig()
-        {
-            NetworkTransport = transport
-        };
-
+        netManComp.NetworkConfig = new NetworkConfig();
+        netManComp.NetworkConfig.NetworkTransport = transport;
+        netManComp.NetworkConfig.ConnectionApproval = true;
         DontDestroyOnLoad(netMan);
 
-        // ✅ Hook connection event BEFORE networking starts
-        NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
-
-        // ✅ Kick off prefab setup now (netManComp is valid)
+        netManComp.OnClientConnectedCallback += OnClientConnected;
         netManComp.StartCoroutine(SetupPlayerPrefabWhenReady());
 
         Debug.Log("[MOD] NetworkManager spawned and coroutine started.");
+        CommandConsole.AddCommand("host", StartHost, false);
+        CommandConsole.AddCommand("join", StartClient, false);
     }
 
     void OnGUI()
@@ -106,9 +85,11 @@ public class Plugin : BaseUnityPlugin
 
     public void StartClient(string[] args)
     {
-        if (this == null)
+        Instance = Plugin.Instance;
+        if (Instance == null)
         {
-            Debug.LogError("[MOD] Plugin.Instance is null — cannot start coroutine.");
+            Debug.LogError("[MOD] This should not be possible. What the fuck?");
+            StartCoroutine(RetryCommandLater(() => StartClient(args)));
             return;
         }
         if (args.Length == 0)
@@ -125,9 +106,6 @@ public class Plugin : BaseUnityPlugin
 
         StartCoroutine(WaitForSteamAndStartClient(steamId));
     }
-    void Update()
-    {
-    }
 
     private void OnDestroy()
     {
@@ -138,7 +116,6 @@ public class Plugin : BaseUnityPlugin
     }
     private IEnumerator SetupPlayerPrefabWhenReady()
     {
-        // 🛑 Check if we already created a prefab clone
         if (prefabClone != null)
         {
             Debug.LogWarning("Prefab clone already created. Skipping setup.");
@@ -155,7 +132,6 @@ public class Plugin : BaseUnityPlugin
 
         Debug.Log("Found CL_Player!");
 
-        // Clone and patch
         prefabClone = Instantiate(sceneObject);
         prefabClone.name = "CL_Player_PrefabClone";
         prefabClone.SetActive(false);
@@ -175,16 +151,24 @@ public class Plugin : BaseUnityPlugin
         Debug.Log("[MOD] Waiting for Steam to initialize...");
 
         yield return new WaitUntil(() => SteamClient.IsValid);
-        yield return new WaitForSeconds(1f); // extra buffer
+        yield return new WaitUntil(() => prefabClone != null); 
 
         if (transport == null)
         {
-            Debug.LogError("[MOD] FacepunchTransport not found on manually spawned NetworkManager.");
+            Debug.LogError("[MOD] FacepunchTransport not found.");
             yield break;
         }
+        netManComp.NetworkConfig.PlayerPrefab = prefabClone;
+        netManComp.ConnectionApprovalCallback = (request, response) =>
+        {
+            response.Approved = true;
+            response.CreatePlayerObject = true;
+            response.Pending = false;
+        };
+
         Debug.Log("[MOD] Starting host...");
-        NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
-        NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnected;
+            NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
+            NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnected;
 
         netManComp.StartHost();
     }
@@ -194,32 +178,58 @@ public class Plugin : BaseUnityPlugin
         Debug.Log("[MOD] Waiting for Steam to initialize...");
 
         yield return new WaitUntil(() => SteamClient.IsValid);
-        yield return new WaitForSeconds(1f); // buffer to ensure relay setup
+        yield return new WaitUntil(() => prefabClone != null);
 
         if (transport == null)
         {
-            Debug.LogError("[MOD] FacepunchTransport not found on manually spawned NetworkManager.");
+            Debug.LogError("[MOD] FacepunchTransport not found.");
             yield break;
         }
 
         transport.targetSteamId = targetSteamId;
+        netManComp.NetworkConfig.PlayerPrefab = prefabClone;
+        netManComp.ConnectionApprovalCallback = (request, response) =>
+        {
+            response.Approved = true;
+            response.CreatePlayerObject = true;
+            response.Pending = false;
+        };
 
-        Debug.Log("[MOD] Starting client connection to " + targetSteamId);
+        Debug.Log("[MOD] Starting client...");
         netManComp.OnClientConnectedCallback += OnClientConnected;
         netManComp.OnClientDisconnectCallback += OnClientDisconnected;
 
         netManComp.StartClient();
     }
+    private bool wasConnected = false;
+
+    void Update()
+    {
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsClient) return;
+
+        if (NetworkManager.Singleton.IsConnectedClient && !wasConnected)
+        {
+            wasConnected = true;
+        }
+        else if (!NetworkManager.Singleton.IsConnectedClient && wasConnected)
+        {
+            wasConnected = false;
+            Debug.LogWarning("[MOD] Detected client disconnection manually.");
+            OnClientDisconnected(NetworkManager.Singleton.LocalClientId);
+        }
+    }
     private void OnClientConnected(ulong clientId)
     {
+
         Debug.Log($"[MOD] Client connected: {clientId}");
 
-        if (NetworkManager.Singleton.IsServer && clientId != NetworkManager.Singleton.LocalClientId)
+        if (NetworkManager.Singleton.IsServer && clientId != 0)
         {
             var prefab = NetworkManager.Singleton.NetworkConfig.PlayerPrefab;
             if (prefab != null)
             {
                 var instance = Instantiate(prefab);
+                instance.SetActive(true);
                 instance.GetComponent<NetworkObject>().SpawnAsPlayerObject(clientId);
                 Debug.Log($"[MOD] Spawned remote player for client {clientId}");
             }
@@ -229,10 +239,14 @@ public class Plugin : BaseUnityPlugin
             }
         }
     }
-
     private void OnClientDisconnected(ulong clientId)
     {
-        Debug.LogWarning($"[MOD] Client disconnected or failed to connect: {clientId}");
+        Debug.LogError($"[MOD] Client disconnected. Possible connection failure to host. ID: {clientId}");
+    }
+    private IEnumerator RetryCommandLater(Action retryAction)
+    {
+        yield return new WaitForSeconds(0.5f);
+        retryAction?.Invoke();
     }
 }
 
